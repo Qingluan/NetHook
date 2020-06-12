@@ -17,3 +17,9 @@ struct socket_info {
 
 */
 // import "C"
+
+var ()
+
+// type SocketInfo struct{
+// 	Famli
+// }

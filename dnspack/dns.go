@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 
+	"github.com/Qingluan/HookNet/ptrace"
 	"golang.org/x/net/dns/dnsmessage"
 )
 
@@ -31,7 +32,7 @@ type Packet struct {
 
 const (
 	// DNS server default port
-	udpPort int = 10053
+	udpPort int = 40053
 	// DNS packet max length
 	packetLen int = 512
 )
@@ -109,6 +110,7 @@ func sendPacket(conn *net.UDPConn, message dnsmessage.Message, addr net.UDPAddr)
 		log.Println(err)
 		return
 	}
+	ptrace.L.GI("Found In Hook DNS Server: IP Answer ->", message.Answers)
 
 	_, err = conn.WriteToUDP(packed, &addr)
 	if err != nil {

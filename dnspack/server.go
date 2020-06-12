@@ -48,5 +48,5 @@ func StartServer() {
 	}
 
 	http.Handle("/dns", withAuth(dnsHandler()))
-	log.Fatal(http.ListenAndServe(":80", nil))
+	log.Fatal(http.ListenAndServe(":40080", nil))
 }
