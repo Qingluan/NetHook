@@ -42,7 +42,7 @@ var (
 
 type Handle struct {
 	entry   bool
-	handler func(pid int, reg *syscall.PtraceRegs)
+	handler func(pid Pid, reg *syscall.PtraceRegs, args ...RArg)
 }
 
 type Pin struct {
@@ -70,7 +70,7 @@ func (pin *Pin) PtraceEntry() (exit bool) {
 	syscall.PtraceGetRegs(pin.pid, pin.regsEntry)
 
 	if handle, ok := pin.HandleMap[pin.regsEntry.Orig_rax]; ok && handle.entry {
-		handle.handler(pin.pid, pin.regsEntry)
+		handle.handler(Pid(pin.pid), pin.regsEntry, GetArgs(pin.regsEntry)...)
 	}
 	return
 }
@@ -82,7 +82,8 @@ func (pin *Pin) PtraceExit() (exit bool) {
 
 	syscall.PtraceGetRegs(pin.pid, pin.regsExit)
 	if handle, ok := pin.HandleMap[pin.regsExit.Orig_rax]; ok && !handle.entry {
-		handle.handler(pin.pid, pin.regsExit)
+		// handle.handler(pin.pid, pin.regsExit)
+		handle.handler(Pid(pin.pid), pin.regsExit, GetArgs(pin.regsEntry)...)
 	}
 
 	if pin.regsExit.Orig_rax == syscall.SYS_EXIT || pin.regsExit.Orig_rax == syscall.SYS_EXIT_GROUP {

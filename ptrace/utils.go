@@ -3,6 +3,7 @@ package ptrace
 import (
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"runtime"
@@ -37,4 +38,10 @@ func Execv() (cmd *exec.Cmd) {
 		log.Fatal(err)
 	}
 	return
+}
+
+type Addr [4]byte
+
+func (addr Addr) IP() net.IP {
+	return net.IP{addr[0], addr[1], addr[2], addr[3]}
 }

@@ -1,40 +1,12 @@
 package main
 
 import (
-	"bytes"
-	"encoding/binary"
 	"fmt"
-	"net"
-	"os"
-	"os/exec"
-	"runtime"
 	"syscall"
 
-	ptrace "github.com/Qingluan/HookNet/ptrace"
+	"github.com/Qingluan/HookNet/ptrace"
+	Ptr "github.com/Qingluan/HookNet/ptrace"
 )
-
-func execv() (cmd *exec.Cmd) {
-	args := os.Args[1:]
-	runnpath, err := exec.LookPath(args[0])
-	if err != nil {
-		ptrace.E(err)
-	}
-	cmd = exec.Command(runnpath, args[1:]...)
-
-	if cmd.SysProcAttr == nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Ptrace: true}
-	} else {
-		cmd.SysProcAttr.Ptrace = true
-	}
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	runtime.LockOSThread()
-	if err := cmd.Start(); err != nil {
-		ptrace.E(err)
-	}
-	return
-}
 
 // func ChildDo(cmd string, args ...string) {
 // 	fmt.Println("Child:", cmd, args, os.Getpid())
@@ -59,19 +31,22 @@ func execv() (cmd *exec.Cmd) {
 // }
 
 func main() {
-	cmd := execv()
+	cmd := ptrace.Execv()
 
-	pin := ptrace.NewPin(cmd)
-	pin.AddHandle(syscall.SYS_SOCKET, true, func(pid int, reg *syscall.PtraceRegs) {
-		// fmt.Println("Entry Socket")
-	})
+	// pin := ptrace.NewPin(cmd)
+	// ptrace.AddHandle(syscall.SYS_SOCKET, true, func(pid int, reg *syscall.PtraceRegs) {
+	// 	// fmt.Println("Entry Socket")
+	// })
 	// pin.addHandle(syscall.SYS_GET)
-	pin.AddHandle(syscall.SYS_CONNECT, true, func(pid int, reg *syscall.PtraceRegs) {
-		addroffset := pin.GetArg(1, reg)
-		buf := pin.GetData(reg, addroffset, int(ptrace.SocketInLen))
-		addin := new(syscall.RawSockaddrInet4)
-		binary.Read(bytes.NewBuffer(buf), binary.BigEndian, addin)
-		fmt.Println(net.IP{addin.Addr[0], addin.Addr[1], addin.Addr[2], addin.Addr[3]}.String(), "Port:", addin.Port)
+	Ptr.AddHandle(syscall.SYS_CONNECT, true, func(pid Ptr.Pid, reg *syscall.PtraceRegs, args ...Ptr.RArg) {
+		addroffset := args[1]
+		// buf := (reg, addroffset, int(ptrace.SocketInLen))
+		addrIn := new(syscall.RawSockaddrInet4)
+
+		addroffset.As(pid, addrIn)
+		fmt.Println(Ptr.Addr(addrIn.Addr).IP().String(), "Port:", addrIn.Port)
 	})
-	pin.PtraceLoop()
+	// pin.PtraceLoop()
+	Ptr.PtraceRun(cmd.Process.Pid)
+
 }

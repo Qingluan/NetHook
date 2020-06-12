@@ -1,7 +1,6 @@
 package ptrace
 
 import (
-	"fmt"
 	"log"
 	"syscall"
 	"unsafe"
@@ -31,38 +30,6 @@ var (
 	AddrInLen = unsafe.Sizeof(syscall.RawSockaddrInet4{})
 	ADDRLEN   = unsafe.Sizeof(syscall.RawSockaddr{})
 )
-
-func (pin *Pin) GetData(reg *syscall.PtraceRegs, offset uint64, len int) []byte {
-	out := make([]byte, len)
-	fmt.Println("offset:", offset)
-	g_l, err := syscall.PtracePeekData(pin.pid, uintptr(offset), out)
-	if err != nil {
-		E(err)
-	}
-	return out[:g_l]
-}
-
-func (pin *Pin) GetArg(order int, reg *syscall.PtraceRegs) uint64 {
-	if reg == nil {
-		return 0
-	}
-	switch order {
-	case 0:
-		return reg.Rdi
-	case 1:
-		return reg.Rsi
-	case 2:
-		return reg.Rdx
-	case 3:
-		return reg.R10
-	case 4:
-		return reg.R8
-	case 5:
-		return reg.R9
-
-	}
-	return 0
-}
 
 /*WaitAPin do wait child pid and check process status
 this code is immplement for c code:
@@ -143,7 +110,7 @@ func WaitAPin() (pin *Pin, exited bool, continued bool) {
 	return
 }
 
-func AddHandle(syscall_id uint64, is_do_in_entry bool, h func(pid int, reg *syscall.PtraceRegs)) {
+func AddHandle(syscall_id uint64, is_do_in_entry bool, h func(pid Pid, reg *syscall.PtraceRegs, args ...RArg)) {
 	CacheArea.HandlerMap[syscall_id] = Handle{
 		entry:   is_do_in_entry,
 		handler: h,
