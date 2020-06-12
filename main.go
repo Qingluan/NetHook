@@ -1,10 +1,10 @@
 package main
 
 import (
-	"fmt"
+	"os"
 	"syscall"
 
-	"github.com/Qingluan/HookNet/ptrace"
+	dns "github.com/Qingluan/HookNet/dnspack"
 	Ptr "github.com/Qingluan/HookNet/ptrace"
 )
 
@@ -31,22 +31,26 @@ import (
 // }
 
 func main() {
-	cmd := ptrace.Execv()
-
-	// pin := ptrace.NewPin(cmd)
-	// ptrace.AddHandle(syscall.SYS_SOCKET, true, func(pid int, reg *syscall.PtraceRegs) {
-	// 	// fmt.Println("Entry Socket")
-	// })
-	// pin.addHandle(syscall.SYS_GET)
-	Ptr.AddHandle(syscall.SYS_CONNECT, true, func(pid Ptr.Pid, reg *syscall.PtraceRegs, args ...Ptr.RArg) {
-		addroffset := args[1]
-		// buf := (reg, addroffset, int(ptrace.SocketInLen))
+	if len(os.Args) < 2 {
+		Ptr.L.GI("少参数")
+		os.Exit(1)
+	}
+	go dns.StartServer()
+	cmd := Ptr.Execv()
+	// ptrace.Execv()
+	Ptr.AddHandle(syscall.SYS_CONNECT, func(mem *Ptr.Memory, args ...Ptr.RArg) {
+		AddrPtrt := args[1]
 		addrIn := new(syscall.RawSockaddrInet4)
+		mem.Dump(AddrPtrt, addrIn)
+		Ptr.L.GI("Entry:", !mem.Exit, Ptr.Addr(addrIn.Addr).IP().String(), "Port:", addrIn.Port)
 
-		addroffset.As(pid, addrIn)
-		fmt.Println(Ptr.Addr(addrIn.Addr).IP().String(), "Port:", addrIn.Port)
+		if !mem.Exit {
+			addrIn.Addr = [4]byte{127, 0, 0, 1}
+			addrIn.Port = 10053
+			mem.Load(AddrPtrt, addrIn)
+		}
 	})
-	// pin.PtraceLoop()
-	Ptr.PtraceRun(cmd.Process.Pid)
 
+	Ptr.PtraceRun(cmd.Process.Pid)
+	// Ptr.PtraceRun(os.Getpid())
 }

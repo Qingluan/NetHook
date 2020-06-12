@@ -1,21 +1,13 @@
 package ptrace
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/exec"
 	"runtime"
 	"syscall"
-
-	"github.com/gen2brain/dlgs"
 )
-
-func E(err error) {
-	_, fn, line, _ := runtime.Caller(1)
-	dlgs.Error("Msg ::", fmt.Sprintf("%s : %d : \n%s", fn, line, err.Error()))
-}
 
 func Execv() (cmd *exec.Cmd) {
 	args := os.Args[1:]

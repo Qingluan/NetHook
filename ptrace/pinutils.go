@@ -1,7 +1,9 @@
 package ptrace
 
 import (
-	"log"
+	"bytes"
+	"encoding/binary"
+	"os"
 	"syscall"
 	"unsafe"
 )
@@ -27,9 +29,14 @@ var (
 		"r12": unsafe.Offsetof(syscall.PtraceRegs{}.R12),
 		"r13": unsafe.Offsetof(syscall.PtraceRegs{}.R13),
 	}
-	AddrInLen = unsafe.Sizeof(syscall.RawSockaddrInet4{})
-	ADDRLEN   = unsafe.Sizeof(syscall.RawSockaddr{})
 )
+
+// Memory a piece of memory at the moment.
+type Memory struct {
+	Pid  Pid
+	Reg  *syscall.PtraceRegs
+	Exit bool
+}
 
 /*WaitAPin do wait child pid and check process status
 this code is immplement for c code:
@@ -64,17 +71,25 @@ this code is immplement for c code:
 		}
 */
 func WaitAPin() (pin *Pin, exited bool, continued bool) {
+
 	var pid int
 	var err error
-	if pid, err = syscall.Wait4(CacheArea.MainPid, &CacheArea.PtraceWaitStatus, syscall.WALL, nil); err != nil {
-		log.Fatal("Wait Function Exe Error: ", err)
+
+	if pid, err = syscall.Wait4(CacheArea.MainPid, &CacheArea.PtraceWaitStatus, 0, nil); err != nil {
+		myPid := os.Getpid()
+		L.Fatal(err, "Main Pid:", CacheArea.MainPid, "Sub pid:", pid, "My Pid:", myPid)
+	}
+	if pid < 0 {
+		L.RI("Exit ....")
+		exited = true
+		return
 	}
 	pin = FindPinByPidOrInit(pid)
 	if pin.flag == STARTUP {
 		// set pin.flag Startef
-		pin.flag++
+
 		if err = syscall.PtraceSetOptions(pin.pid, syscall.PTRACE_O_TRACECLONE|syscall.PTRACE_O_TRACESYSGOOD|syscall.PTRACE_O_TRACEEXEC|syscall.PTRACE_O_TRACEFORK|syscall.PTRACE_O_TRACEVFORK); err != nil {
-			log.Fatal("Init Pid Ptrace Option Error:", err)
+			L.Fatal(err, pin.pid)
 			return
 		}
 	}
@@ -82,6 +97,7 @@ func WaitAPin() (pin *Pin, exited bool, continued bool) {
 		/* Re alloc Pin : because this pid which has finished!
 		delete by pid
 		*/
+		L.YI("delete cache Pin")
 		DeletePinByPid(pid)
 		/*
 			Init Pin by Pid
@@ -99,28 +115,38 @@ func WaitAPin() (pin *Pin, exited bool, continued bool) {
 			}
 	*/
 	if uint64(CacheArea.PtraceWaitStatus.Signal())>>16 != 0 {
-		log.Println("~~ Bye unknow:")
-		exited = true
+		// if pin.flag == STARTUP {
+		// 	// continued = true
+		// 	return
+		// }
+		// L.YI("~~ Bye unknow:")
+		// exited = true
+		return
 	}
 
 	if CacheArea.PtraceWaitStatus.Stopped() {
-		log.Println("~~ Bye Normal:")
+		if pin.flag == STARTUP {
+			// continued = true
+			return
+		}
+		L.YI("~~ Bye Normal:")
 		exited = true
 	}
 	return
 }
 
-func AddHandle(syscall_id uint64, is_do_in_entry bool, h func(pid Pid, reg *syscall.PtraceRegs, args ...RArg)) {
-	CacheArea.HandlerMap[syscall_id] = Handle{
-		entry:   is_do_in_entry,
-		handler: h,
-	}
+func AddHandle(syscall_id uint64, h func(mem *Memory, args ...RArg)) {
+	CacheArea.HandlerMap[syscall_id] = h
 }
 
 func FindPinByPidOrInit(pid int) *Pin {
 	if pin, ok := CacheArea.PidPin[pid]; ok {
+
+		// L.YI("finded Pin")
 		return pin
 	} else {
+
+		L.YI("init Pin")
 		pin := NewPin(pid)
 		CacheArea.PidPin[pid] = pin
 		return pin
@@ -140,17 +166,23 @@ func PtraceRun(mainpid int) {
 		pin             *Pin
 		exit, continued bool
 	)
+	i := 0
 	for {
+		i++
 		/*
 			Detail in WaitAPin:
 		*/
+		// L.GI("exit in ", i)
+
 		if pin, exit, continued = WaitAPin(); exit {
+
 			break
 		} else if continued {
 			continue
 		} else if pin == nil {
 			continue
 		}
+		// L.GI("Good:", pin)
 		// child end, no need to syscall resume ptrace
 		if continued = pin.PTrace(); continued {
 			continue
@@ -158,4 +190,23 @@ func PtraceRun(mainpid int) {
 		syscall.PtraceSyscall(pin.pid, 0)
 
 	}
+}
+
+// Args in memory
+func (mem *Memory) Args() (args []RArg) {
+	args = GetArgs(mem.Reg)
+	return
+}
+
+// Unmarshal dump reg argsaddr to struct
+func (mem *Memory) Dump(argAddr RArg, obj interface{}) (err error) {
+	return argAddr.As(mem.Pid, obj)
+}
+
+// Marshal set data to memory struct
+func (mem *Memory) Load(argAddr RArg, obj interface{}) (err error) {
+	buf := bytes.NewBuffer(nil)
+	binary.Write(buf, binary.BigEndian, obj)
+	_, err = syscall.PtracePokeData(int(mem.Pid), uintptr(argAddr), buf.Bytes())
+	return
 }

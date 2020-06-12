@@ -31,18 +31,18 @@ var parentid int
 var (
 	CacheArea = struct {
 		PidPin           map[int]*Pin
-		HandlerMap       map[uint64]Handle
+		HandlerMap       map[uint64]func(mem *Memory, args ...RArg)
 		PtraceWaitStatus syscall.WaitStatus
 		MainPid          int
 	}{
-		HandlerMap: make(map[uint64]Handle),
+		HandlerMap: make(map[uint64]func(mem *Memory, args ...RArg)),
 		PidPin:     make(map[int]*Pin),
 	}
 )
 
 type Handle struct {
 	entry   bool
-	handler func(pid Pid, reg *syscall.PtraceRegs, args ...RArg)
+	handler func(mem *Memory, args ...RArg)
 }
 
 type Pin struct {
@@ -51,7 +51,6 @@ type Pin struct {
 	flag      int
 	regsEntry *syscall.PtraceRegs
 	regsExit  *syscall.PtraceRegs
-	HandleMap map[uint64]Handle
 }
 
 func NewPin(pid int) (pin *Pin) {
@@ -69,10 +68,20 @@ func (pin *Pin) PtraceEntry() (exit bool) {
 
 	syscall.PtraceGetRegs(pin.pid, pin.regsEntry)
 
-	if handle, ok := pin.HandleMap[pin.regsEntry.Orig_rax]; ok && handle.entry {
-		handle.handler(Pid(pin.pid), pin.regsEntry, GetArgs(pin.regsEntry)...)
+	if handle, ok := CacheArea.HandlerMap[pin.regsEntry.Orig_rax]; ok {
+
+		handle(&Memory{
+			Pid:  Pid(pin.pid),
+			Exit: false,
+			Reg:  pin.regsEntry,
+		}, GetArgs(pin.regsEntry)...)
+		pin.flag = ENTRYED
 	}
 	return
+}
+
+func (pin *Pin) SavePinByPid() {
+	CacheArea.PidPin[pin.pid] = pin
 }
 
 func (pin *Pin) PtraceExit() (exit bool) {
@@ -81,9 +90,12 @@ func (pin *Pin) PtraceExit() (exit bool) {
 	}()
 
 	syscall.PtraceGetRegs(pin.pid, pin.regsExit)
-	if handle, ok := pin.HandleMap[pin.regsExit.Orig_rax]; ok && !handle.entry {
-		// handle.handler(pin.pid, pin.regsExit)
-		handle.handler(Pid(pin.pid), pin.regsExit, GetArgs(pin.regsEntry)...)
+	if handle, ok := CacheArea.HandlerMap[pin.regsExit.Orig_rax]; ok {
+		handle(&Memory{
+			Pid:  Pid(pin.pid),
+			Exit: true,
+			Reg:  pin.regsExit,
+		}, GetArgs(pin.regsEntry)...)
 	}
 
 	if pin.regsExit.Orig_rax == syscall.SYS_EXIT || pin.regsExit.Orig_rax == syscall.SYS_EXIT_GROUP {
@@ -92,10 +104,14 @@ func (pin *Pin) PtraceExit() (exit bool) {
 	return
 }
 
-func (pin *Pin) PTrace() bool {
+func (pin *Pin) PTrace() (e bool) {
+	// update Pin after ptrace
+	defer pin.SavePinByPid()
 	if pin.flag == ENTRYED {
-		return pin.PtraceExit()
+		e = pin.PtraceExit()
+		pin.flag = NOENTRYED
 	} else {
-		return pin.PtraceEntry()
+		e = pin.PtraceEntry()
 	}
+	return
 }
