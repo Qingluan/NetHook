@@ -5,7 +5,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"runtime"
 	"syscall"
 )
 
@@ -18,14 +17,17 @@ func Execv() (cmd *exec.Cmd) {
 	cmd = exec.Command(runnpath, args[1:]...)
 
 	if cmd.SysProcAttr == nil {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Ptrace: true}
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Ptrace: true,
+			// Cloneflags: uintptr(syscall.CLONE_VM | syscall.CLONE_VFORK | syscall.CLONE_NEWUTS | syscall.SIGCHLD),
+		}
 	} else {
 		cmd.SysProcAttr.Ptrace = true
 	}
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	runtime.LockOSThread()
+	// runtime.LockOSThread()
 	if err := cmd.Start(); err != nil {
 		log.Fatal(err)
 	}

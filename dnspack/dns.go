@@ -6,7 +6,6 @@ import (
 	"net"
 	"strings"
 
-	"github.com/Qingluan/HookNet/ptrace"
 	"golang.org/x/net/dns/dnsmessage"
 )
 
@@ -67,7 +66,8 @@ func (s *DNSService) Listen() {
 		if len(m.Questions) == 0 {
 			continue
 		}
-		go s.Query(Packet{*addr, m})
+		// go s.Query(Packet{*addr, m})
+		go s.QueryFake(Packet{*addr, m})
 	}
 }
 
@@ -110,7 +110,7 @@ func sendPacket(conn *net.UDPConn, message dnsmessage.Message, addr net.UDPAddr)
 		log.Println(err)
 		return
 	}
-	ptrace.L.GI("Found In Hook DNS Server: IP Answer ->", message.Answers)
+	// ptrace.L.GI("Found In Hook DNS Server: IP Answer ->", message.Answers)
 
 	_, err = conn.WriteToUDP(packed, &addr)
 	if err != nil {

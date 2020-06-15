@@ -16,23 +16,9 @@ func main() {
 	go dns.StartServer()
 	cmd := Ptr.Execv()
 	// ptrace.Execv()
-	Ptr.AddHandle(syscall.SYS_CONNECT, func(mem *Ptr.Memory, args ...Ptr.RArg) {
-
-		AddrPtrt := args[1]
-		addrIn := new(syscall.RawSockaddrInet4)
-		mem.Dump(AddrPtrt, addrIn)
-		if addrIn.Port != 53 {
-			return
-		}
-		Ptr.L.GI("Entry:", addrIn.Family, !mem.Exit, Ptr.Addr(addrIn.Addr).IP().String(), "Port:", addrIn.Port)
-
-		if !mem.Exit {
-			addrIn.Addr = [4]byte{127, 0, 0, 1}
-			addrIn.Port = 40053
-			mem.Load(AddrPtrt, addrIn)
-		}
-	})
+	Ptr.AddHandle(syscall.SYS_SOCKET, Ptr.HookCacheSocketInfo)
+	Ptr.AddHandle(syscall.SYS_CONNECT, Ptr.SmartHookTCP)
 
 	Ptr.PtraceRun(cmd.Process.Pid)
-	// Ptr.PtraceRun(os.Getpid())
+	Ptr.PtraceRun(os.Getpid())
 }

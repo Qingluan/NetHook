@@ -39,7 +39,7 @@ func (regarg RArg) As(pid Pid, obj interface{}) (err error) {
 	out := make([]byte, len)
 	Glen, err := syscall.PtracePeekData(int(pid), uintptr(regarg), out)
 	if err != nil {
-		E(err)
+		return
 	}
 	err = binary.Read(bytes.NewBuffer(out[:Glen]), binary.BigEndian, obj)
 	return

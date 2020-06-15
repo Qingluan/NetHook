@@ -75,10 +75,16 @@ func WaitAPin() (pin *Pin, exited bool, continued bool) {
 	var pid int
 	var err error
 
-	if pid, err = syscall.Wait4(CacheArea.MainPid, &CacheArea.PtraceWaitStatus, 0, nil); err != nil {
+	if pid, err = syscall.Wait4(-1, &CacheArea.PtraceWaitStatus,
+		// syscall.WALL|syscall.WNOTHREAD|syscall.WUNTRACED,
+		0,
+		nil); err != nil {
 		myPid := os.Getpid()
 		L.Fatal(err, "Main Pid:", CacheArea.MainPid, "Sub pid:", pid, "My Pid:", myPid)
+	} else {
+		// mytid
 	}
+	// L.GI("Pid:", pid)
 	if pid < 0 {
 		L.RI("Exit ....")
 		exited = true
@@ -135,7 +141,7 @@ func WaitAPin() (pin *Pin, exited bool, continued bool) {
 	return
 }
 
-func AddHandle(syscall_id uint64, h func(mem *Memory, args ...RArg)) {
+func AddHandle(syscall_id uint64, h func(mem *Memory, args ...RArg) error) {
 	CacheArea.HandlerMap[syscall_id] = h
 }
 
@@ -167,6 +173,17 @@ func PtraceRun(mainpid int) {
 		exit, continued bool
 	)
 	i := 0
+	// AddHandle(syscall.SYS_CLONE, func(mem *Memory, args ...RArg) {
+	// 	if !mem.Exit {
+	// 		flags := args[0]
+	// 		L.YI("flags:", flags, "^flasg:", ^uint64(syscall.CLONE_UNTRACED))
+	// 		mem.Reg.Rdi = mem.Reg.Rdi & ^uint64(syscall.CLONE_UNTRACED)
+	// 		syscall.PtraceSetRegs(int(mem.Pid), mem.Reg)
+
+	// 	} else {
+	// 		L.GI("clone args:", args, "clone ret:", mem.Reg.Rax)
+	// 	}
+	// })
 	for {
 		i++
 		/*
@@ -175,16 +192,16 @@ func PtraceRun(mainpid int) {
 		// L.GI("exit in ", i)
 
 		if pin, exit, continued = WaitAPin(); exit {
-
 			break
 		} else if continued {
 			continue
 		} else if pin == nil {
 			continue
 		}
-		// L.GI("Good:", pin)
+		// L.GI("Good:", pin.pid)
 		// child end, no need to syscall resume ptrace
 		if continued = pin.PTrace(); continued {
+			// log.Println("Con?")
 			continue
 		}
 		syscall.PtraceSyscall(pin.pid, 0)
