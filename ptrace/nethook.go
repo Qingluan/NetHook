@@ -18,6 +18,10 @@ struct socket_info {
 */
 // import "C"
 import (
+	"encoding/binary"
+	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -30,6 +34,9 @@ var (
 	FdHookList = make(map[uint64]SockInfo)
 	locker     sync.RWMutex
 	NULL_ADDR  = [4]byte{0, 0, 0, 0}
+	PROXY_DEST = "127.0.0.1"
+	PROXY_PORT = 1091
+	PROXY_TP   = "socks5"
 )
 
 func SaveHookInfo(k uint64, so SockInfo) {
@@ -53,6 +60,16 @@ type SockInfo struct {
 
 func GetPK(pid int, sockfd uint64) uint64 {
 	return uint64(sockfd)<<31 + uint64(pid)
+}
+
+func str2ip(s string) [4]byte {
+	ss := strings.SplitN(s, ".", 4)
+	sd := [4]byte{}
+	for no, sss := range ss {
+		si, _ := strconv.Atoi(sss)
+		sd[no] = byte(si)
+	}
+	return sd
 }
 
 func HookCacheSocketInfo(mem *Memory, args ...RArg) (err error) {
@@ -100,7 +117,37 @@ func SmartHookTCP(mem *Memory, args ...RArg) (err error) {
 		return
 	}
 	if mem.Exit {
-		realDomain := dns.SearchByIP(addrIn.Addr)
+		if domain, isIp := dns.SearchByIP(addrIn.Addr); isIp {
+			firstData := []byte{0x05, 0x01, 0x00, 0x01, addrIn.Addr[0], addrIn.Addr[1], addrIn.Addr[2], addrIn.Addr[3]}
+			buf := make([]byte, 2)
+			binary.BigEndian.PutUint16(buf, addrIn.Port)
+			firstData = append(firstData, buf...)
+			L.MI("Data:", net.IP(addrIn.Addr[0:4]).String(), firstData)
+
+			if _, err := syscall.Write(int(SocketPtr), firstData); err != nil {
+				L.MI(err)
+			}
+		} else {
+			domainLen := len(domain)
+			firstData := []byte{0x05, 0x01, 0x00, 0x03}
+			buf := make([]byte, 2)
+			binary.BigEndian.PutUint16(buf, uint16(domainLen))
+
+			firstData = append(firstData, buf...)
+			firstData = append(firstData, []byte(domain)...)
+			L.MI("Data:", firstData)
+
+			// syscall.Read(int(SocketPtr), )
+			// L.MI("Data:", firstData)
+			// L.MI("Data:", firstData)
+			// L.MI("Data:", firstData)
+			// L.MI("Data:", firstData)
+			// fmt.Println(firstData)
+			// log.Fatal(firstData)
+			if _, err := syscall.Write(int(SocketPtr), firstData); err != nil {
+				L.MI(err)
+			}
+		}
 
 	} else {
 		// L.GI("pid:", mem.Pid, "Socket FD:", int(SocketPtr), "Entry:", !mem.Exit, Addr(addrIn.Addr).IP().String(), "Port:", addrIn.Port)
@@ -114,9 +161,14 @@ func SmartHookTCP(mem *Memory, args ...RArg) (err error) {
 				addrIn.Port = 40053
 				mem.Load(AddrPtr, addrIn)
 				defer DelHookInfo(pk)
+				return
 			}
 
 		}
+		addrIn.Addr = str2ip(PROXY_DEST)
+		addrIn.Port = uint16(PROXY_PORT)
+		L.GI("===>", PROXY_DEST, PROXY_PORT)
+		mem.Load(AddrPtr, addrIn)
 
 	}
 	return

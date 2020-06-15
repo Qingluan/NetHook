@@ -16,13 +16,13 @@ var (
 	LOCKER      sync.RWMutex
 )
 
-func SearchByIP(ip [4]byte) string {
+func SearchByIP(ip [4]byte) (string, bool) {
 	o, ok := IPDomainMAP[ip]
 	if ok {
-		return o
+		return o, false
 	}
 	i := net.IP{ip[0], ip[1], ip[2], ip[3]}
-	return i.String()
+	return i.String(), true
 }
 
 func FindByDomain(domain string) (ip [4]byte) {

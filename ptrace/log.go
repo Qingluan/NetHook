@@ -38,6 +38,21 @@ func (ll llog) GI(args ...interface{}) {
 
 }
 
+func (ll llog) MI(args ...interface{}) {
+	greenI := color.New(color.FgMagenta, color.Bold).SprintFunc()
+	green := color.New(color.FgCyan).SprintFunc()
+	msg := ""
+	for _, a := range args {
+		msg += ll.sep + green(a)
+	}
+	if ll.uselog {
+		log.Print(greenI("[$]"), msg, ll.end)
+	} else {
+		fmt.Print(greenI("[$]"), msg, ll.end)
+	}
+
+}
+
 func (ll llog) YI(args ...interface{}) {
 	greenI := color.New(color.FgYellow, color.Bold).SprintFunc()
 	green := color.New(color.Bold).SprintFunc()
