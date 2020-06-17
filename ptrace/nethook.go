@@ -1,10 +1,13 @@
+// +build cgo,!netgo
+
 package ptrace
 
-// +build cgo,!netgo
 /* C code */
 
 /*
+#include <errno.h>
 #include <sys/socket.h>
+#include <stdio.h>
 
 typedef unsigned long long uint64_t;
 struct socket_info {
@@ -14,6 +17,17 @@ struct socket_info {
 	int domain;
 	int type;
 };
+
+int
+WriteToSocket(int fd, char *buf){
+	size_t size;
+	size = strlen(buf);
+	if (fwrite(fd, buf, size) <= 0) {
+		if (errno)
+			perror("write");
+		fprintf(stderr, "write failed!\n");
+	}
+}
 
 */
 // import "C"
@@ -102,6 +116,53 @@ func HookCacheSocketInfo(mem *Memory, args ...RArg) (err error) {
 	return
 }
 
+func GetSocks5Data(mem *Memory, args ...RArg) (outBuf []byte, err error) {
+	AddrPtr := args[1]
+	SocketPtr := args[0]
+
+	addrIn := new(syscall.RawSockaddrInet4)
+	err = mem.Dump(AddrPtr, addrIn)
+	realDest, err := mem.CacheGet(int(SocketPtr))
+	if err != nil {
+		L.MI(err)
+		return
+	}
+	mem.CacheDel(int(SocketPtr))
+	_tmp := strings.SplitN(realDest, "://", 2)
+
+	if _tmp[0] == "ip" {
+		ip := net.ParseIP(_tmp[1]).To4()
+		firstData := []byte{0x05, 0x01, 0x00, 0x01}
+		firstData = append(firstData, ip...)
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, addrIn.Port)
+		firstData = append(firstData, buf...)
+		L.MI("Data:", net.IP(addrIn.Addr[0:4]).String(), firstData)
+
+		if _, err := syscall.Write(int(SocketPtr), firstData); err != nil {
+			L.MI(err)
+		}
+
+		outBuf = firstData
+	} else {
+		domainLen := len(_tmp[1])
+		firstData := []byte{0x05, 0x01, 0x00, 0x03}
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, uint16(domainLen))
+
+		firstData = append(firstData, buf...)
+		firstData = append(firstData, []byte(_tmp[1])...)
+		L.MI("Data:", firstData)
+		if _, err := syscall.Write(int(SocketPtr), firstData); err != nil {
+			L.MI(err)
+		}
+
+		outBuf = firstData
+	}
+	return
+
+}
+
 func SmartHookTCP(mem *Memory, args ...RArg) (err error) {
 	AddrPtr := args[1]
 	SocketPtr := args[0]
@@ -117,37 +178,6 @@ func SmartHookTCP(mem *Memory, args ...RArg) (err error) {
 		return
 	}
 	if mem.Exit {
-		if domain, isIp := dns.SearchByIP(addrIn.Addr); isIp {
-			firstData := []byte{0x05, 0x01, 0x00, 0x01, addrIn.Addr[0], addrIn.Addr[1], addrIn.Addr[2], addrIn.Addr[3]}
-			buf := make([]byte, 2)
-			binary.BigEndian.PutUint16(buf, addrIn.Port)
-			firstData = append(firstData, buf...)
-			L.MI("Data:", net.IP(addrIn.Addr[0:4]).String(), firstData)
-
-			if _, err := syscall.Write(int(SocketPtr), firstData); err != nil {
-				L.MI(err)
-			}
-		} else {
-			domainLen := len(domain)
-			firstData := []byte{0x05, 0x01, 0x00, 0x03}
-			buf := make([]byte, 2)
-			binary.BigEndian.PutUint16(buf, uint16(domainLen))
-
-			firstData = append(firstData, buf...)
-			firstData = append(firstData, []byte(domain)...)
-			L.MI("Data:", firstData)
-
-			// syscall.Read(int(SocketPtr), )
-			// L.MI("Data:", firstData)
-			// L.MI("Data:", firstData)
-			// L.MI("Data:", firstData)
-			// L.MI("Data:", firstData)
-			// fmt.Println(firstData)
-			// log.Fatal(firstData)
-			if _, err := syscall.Write(int(SocketPtr), firstData); err != nil {
-				L.MI(err)
-			}
-		}
 
 	} else {
 		// L.GI("pid:", mem.Pid, "Socket FD:", int(SocketPtr), "Entry:", !mem.Exit, Addr(addrIn.Addr).IP().String(), "Port:", addrIn.Port)
@@ -163,14 +193,44 @@ func SmartHookTCP(mem *Memory, args ...RArg) (err error) {
 				defer DelHookInfo(pk)
 				return
 			}
-
 		}
-		addrIn.Addr = str2ip(PROXY_DEST)
-		addrIn.Port = uint16(PROXY_PORT)
-		L.GI("===>", PROXY_DEST, PROXY_PORT)
-		mem.Load(AddrPtr, addrIn)
+		if domain, isIp := dns.SearchByIP(addrIn.Addr); !isIp {
+			mem.CacheSave(int(SocketPtr), domain, false)
+		} else {
+			if !IsLocal(addrIn.Addr) {
+				mem.CacheSave(int(SocketPtr), net.IP(addrIn.Addr[:4]).String(), true)
+			}
+		}
+		if !IsLocal(addrIn.Addr) {
+
+			L.GI(addrIn.Addr, "===>", PROXY_DEST, PROXY_PORT)
+			addrIn.Addr = str2ip(PROXY_DEST)
+			addrIn.Port = uint16(PROXY_PORT)
+			mem.Load(AddrPtr, addrIn)
+			// if socksData, err := GetSocks5Data(mem, args...); err != nil {
+			// 	L.MI(err)
+			// } else {
+			// 	// if _, err := syscall.Write(int(SocketPtr), socksData); err != nil {
+			// 	// 	L.MI(err)
+			// 	// }
+			// 	// C.WriteToSocket(int(SocketPtr), C.CBytes(socksData))
+			// }
+		}
 
 	}
 	return
 
+}
+
+func IsLocal(addr [4]byte) bool {
+	if net.IP(addr[:4]).String() == "127.0.0.1" {
+		// fmt.Println("s.")
+		return true
+	}
+	// } else if addr[0] == 192 && addr[1] == 168 {
+	// 	return true
+	// } else if addr[0] == 10 {
+	// 	return true
+	// }
+	return false
 }

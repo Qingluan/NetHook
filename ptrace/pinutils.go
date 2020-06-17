@@ -3,6 +3,8 @@ package ptrace
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"os"
 	"syscall"
 	"unsafe"
@@ -29,6 +31,7 @@ var (
 		"r12": unsafe.Offsetof(syscall.PtraceRegs{}.R12),
 		"r13": unsafe.Offsetof(syscall.PtraceRegs{}.R13),
 	}
+	magicCache = make(map[uint64]string)
 )
 
 // Memory a piece of memory at the moment.
@@ -36,6 +39,29 @@ type Memory struct {
 	Pid  Pid
 	Reg  *syscall.PtraceRegs
 	Exit bool
+}
+
+func (mem *Memory) CacheSave(fd int, domain string, isip bool) {
+	p := GetPK(int(mem.Pid), uint64(fd))
+	if isip {
+		magicCache[p] = fmt.Sprintf("ip://%s", domain)
+	} else {
+		magicCache[p] = fmt.Sprintf("domain://%s", domain)
+	}
+}
+
+func (mem *Memory) CacheDel(fd int) {
+	p := GetPK(int(mem.Pid), uint64(fd))
+	delete(magicCache, p)
+}
+
+func (mem *Memory) CacheGet(fd int) (o string, err error) {
+	p := GetPK(int(mem.Pid), uint64(fd))
+	var ok bool
+	if o, ok = magicCache[p]; !ok {
+		err = errors.New("No such cache to Found!!!!")
+	}
+	return
 }
 
 /*WaitAPin do wait child pid and check process status
@@ -218,6 +244,23 @@ func (mem *Memory) Args() (args []RArg) {
 // Unmarshal dump reg argsaddr to struct
 func (mem *Memory) Dump(argAddr RArg, obj interface{}) (err error) {
 	return argAddr.As(mem.Pid, obj)
+}
+
+// DumpRaw dump reg argsaddr to bytes
+func (mem *Memory) DumpRaw(argAddr RArg, len int) (out []byte, err error) {
+	out = make([]byte, len)
+	_, err = syscall.PtracePeekData(int(mem.Pid), uintptr(argAddr), out)
+	return
+}
+
+// DumpRaw dump reg argsaddr to bytes
+func (mem *Memory) DumpInt(argAddr RArg) (out uint16, err error) {
+	if outb, err := mem.DumpRaw(argAddr, 4); err != nil {
+		return 0, err
+	} else {
+		binary.BigEndian.PutUint16(outb, out)
+	}
+	return
 }
 
 // Marshal set data to memory struct
