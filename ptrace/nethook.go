@@ -45,12 +45,13 @@ import (
 // import "C"
 
 var (
-	FdHookList = make(map[uint64]SockInfo)
-	locker     sync.RWMutex
-	NULL_ADDR  = [4]byte{0, 0, 0, 0}
-	PROXY_DEST = "127.0.0.1"
-	PROXY_PORT = 1091
-	PROXY_TP   = "socks5"
+	FdHookList     = make(map[uint64]SockInfo)
+	locker         sync.RWMutex
+	NULL_ADDR      = [4]byte{0, 0, 0, 0}
+	PROXY_DEST     = "127.0.0.1"
+	PROXY_PORT     = 50092
+	PROXY_TP       = "socks5"
+	ClientUnixSock = NewCacheUnixSocket("/tmp/unix.sock")
 )
 
 func SaveHookInfo(k uint64, so SockInfo) {
@@ -129,7 +130,8 @@ func GetSocks5Data(mem *Memory, args ...RArg) (outBuf []byte, err error) {
 	}
 	mem.CacheDel(int(SocketPtr))
 	_tmp := strings.SplitN(realDest, "://", 2)
-
+	// a := strings.SplitN(_tmp[1], ":", 2)
+	// port, _ := strconv.Atoi(a[1])
 	if _tmp[0] == "ip" {
 		ip := net.ParseIP(_tmp[1]).To4()
 		firstData := []byte{0x05, 0x01, 0x00, 0x01}
@@ -145,19 +147,8 @@ func GetSocks5Data(mem *Memory, args ...RArg) (outBuf []byte, err error) {
 
 		outBuf = firstData
 	} else {
-		domainLen := len(_tmp[1])
-		firstData := []byte{0x05, 0x01, 0x00, 0x03}
-		buf := make([]byte, 2)
-		binary.BigEndian.PutUint16(buf, uint16(domainLen))
 
-		firstData = append(firstData, buf...)
-		firstData = append(firstData, []byte(_tmp[1])...)
-		L.MI("Data:", firstData)
-		if _, err := syscall.Write(int(SocketPtr), firstData); err != nil {
-			L.MI(err)
-		}
-
-		outBuf = firstData
+		// outBuf = firstData
 	}
 	return
 
@@ -178,6 +169,14 @@ func SmartHookTCP(mem *Memory, args ...RArg) (err error) {
 		return
 	}
 	if mem.Exit {
+		o, _ := mem.CacheGet(int(SocketPtr))
+		if o != "" {
+			a := strings.SplitN(o, ":", 2)
+			p, _ := strconv.Atoi(a[1])
+			NewCacheUnixSocket("/tmp/unix.sock").Send(a[0], int(p))
+		} else {
+			return
+		}
 
 	} else {
 		// L.GI("pid:", mem.Pid, "Socket FD:", int(SocketPtr), "Entry:", !mem.Exit, Addr(addrIn.Addr).IP().String(), "Port:", addrIn.Port)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"os"
 	"syscall"
 
@@ -12,6 +13,13 @@ func main() {
 	if len(os.Args) < 2 {
 		Ptr.L.GI("少参数")
 		os.Exit(1)
+	} else if os.Args[1] == "-h" {
+		flag.Parse()
+		return
+	} else if os.Args[1][0] == '-' {
+		red := Ptr.NewRedirector(*Ptr.UnixServerAddr)
+		red.Socks5Server()
+		return
 	}
 	go dns.StartServer()
 	cmd := Ptr.Execv()
