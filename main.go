@@ -17,7 +17,9 @@ func main() {
 		flag.Parse()
 		return
 	} else if os.Args[1][0] == '-' {
-		red := Ptr.NewRedirector(*Ptr.UnixServerAddr)
+
+		red := Ptr.NewRedirector("127.0.0.1:1091")
+		Ptr.L.GI("->", red.RedirectServer)
 		red.Socks5Server()
 		return
 	}

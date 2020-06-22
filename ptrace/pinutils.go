@@ -119,11 +119,12 @@ func WaitAPin() (pin *Pin, exited bool, continued bool) {
 	pin = FindPinByPidOrInit(pid)
 	if pin.flag == STARTUP {
 		// set pin.flag Startef
-
+		L.GI("Initet")
 		if err = syscall.PtraceSetOptions(pin.pid, syscall.PTRACE_O_TRACECLONE|syscall.PTRACE_O_TRACESYSGOOD|syscall.PTRACE_O_TRACEEXEC|syscall.PTRACE_O_TRACEFORK|syscall.PTRACE_O_TRACEVFORK); err != nil {
 			L.Fatal(err, pin.pid)
 			return
 		}
+		pin.flag = ^STARTUP
 	}
 	if CacheArea.PtraceWaitStatus.Exited() || CacheArea.PtraceWaitStatus.Signaled() || !CacheArea.PtraceWaitStatus.Stopped() {
 		/* Re alloc Pin : because this pid which has finished!
@@ -267,6 +268,8 @@ func (mem *Memory) DumpInt(argAddr RArg) (out uint16, err error) {
 func (mem *Memory) Load(argAddr RArg, obj interface{}) (err error) {
 	buf := bytes.NewBuffer(nil)
 	binary.Write(buf, binary.BigEndian, obj)
+	// var n int
 	_, err = syscall.PtracePokeData(int(mem.Pid), uintptr(argAddr), buf.Bytes())
+	// L.GI("poke :", buf)
 	return
 }

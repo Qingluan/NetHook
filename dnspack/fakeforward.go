@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	// "github.com/Qingluan/HookNet/ptrace"
+
 	"golang.org/x/net/dns/dnsmessage"
 )
 
@@ -45,9 +46,13 @@ func FindByDomain(domain string) (ip [4]byte) {
 func (s *DNSService) GetADNSReply(p *dnsmessage.Message) (reply []byte, err error) {
 	q := p.Questions[0]
 	domain := q.Name.String()
-	log.Println("Try to Random:", domain)
-	ip := FindByDomain(domain)
+	dl := len(domain)
+	log.Println("Try to Random:", domain[:dl-1])
+
+	ip := FindByDomain(domain[:dl-1])
 	// ip := [4]byte{127, 0, 0, 1}
+	// ptrace.NewCacheUnixSocket("/tmp/unix.sock").Set()
+
 	p.Answers = append(p.Answers, dnsmessage.Resource{
 		Header: dnsmessage.ResourceHeader{
 			Name:  q.Name,

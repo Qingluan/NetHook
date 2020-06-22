@@ -49,7 +49,7 @@ var (
 	locker         sync.RWMutex
 	NULL_ADDR      = [4]byte{0, 0, 0, 0}
 	PROXY_DEST     = "127.0.0.1"
-	PROXY_PORT     = 50092
+	PROXY_PORT     = 50093
 	PROXY_TP       = "socks5"
 	ClientUnixSock = NewCacheUnixSocket("/tmp/unix.sock")
 )
@@ -70,7 +70,36 @@ type SockInfo struct {
 	Domain     int
 	SocketType int
 	SocketFd   int
+	IsUdp      bool
+	isTcp      bool
 	Pid        int
+	Dst        string
+	Dport      int
+	OnlyIp     bool
+}
+
+func (socks *SockInfo) Sock5Data() (firstData []byte) {
+	if socks.OnlyIp {
+
+		firstData = []byte{0x05, 0x01, 0x00, 0x01}
+		firstData = append(firstData, net.ParseIP(socks.Dst)...)
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, uint16(socks.Dport))
+		firstData = append(firstData, buf...)
+
+	} else {
+		firstData = []byte{0x05, 0x01, 0x00, 0x03}
+		bufl := make([]byte, 2)
+		binary.BigEndian.PutUint16(bufl, uint16(len(socks.Dst)))
+
+		firstData = append(firstData, bufl...)
+		firstData = append(firstData, []byte(socks.Dst)...)
+
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, uint16(socks.Dport))
+		firstData = append(firstData, buf...)
+	}
+	return
 }
 
 func GetPK(pid int, sockfd uint64) uint64 {
@@ -100,20 +129,25 @@ func HookCacheSocketInfo(mem *Memory, args ...RArg) (err error) {
 	}
 	domain := args[0]
 	tp := args[1]
-	// if (tp&syscall.SOCK_STREAM) < 1 || domain != syscall.AF_INET {
-	if (tp&syscall.SOCK_DGRAM) < 1 || domain != syscall.AF_INET {
-
-		// L.YI
+	if domain != syscall.AF_INET {
 		return
 	}
-	// if int(args[1]) == syscall.SOCK_DGRAM {
-	L.YI("<< Cased", "pid:", mem.Pid, "Socket FD:", int(mem.Reg.Rax), "Cache ", "Tp:", int(tp&syscall.SOCK_DGRAM))
-	SaveHookInfo(GetPK(int(mem.Pid), mem.Reg.Rax), SockInfo{
+	L.YI("<< Cased", "pid:", mem.Pid, "Socket FD:", int(mem.Reg.Rax), "Cache ", "Tcp:", int(tp)&syscall.SOCK_STREAM, "Udp:", int(tp)&syscall.SOCK_DGRAM)
+	sockInfo := SockInfo{
 		Domain:     int(args[0]),
 		SocketType: int(args[1]),
 		SocketFd:   int(mem.Reg.Rax),
-	})
-	// }
+	}
+	// if (tp&syscall.SOCK_STREAM) < 1 || domain != syscall.AF_INET {
+	if (tp & syscall.SOCK_STREAM) > 0 {
+		// if int(args[1]) == syscall.SOCK_DGRAM {
+		sockInfo.isTcp = true
+		SaveHookInfo(GetPK(int(mem.Pid), mem.Reg.Rax), sockInfo)
+	} else if (tp & syscall.SOCK_DGRAM) > 0 {
+		// if int(args[1]) == syscall.SOCK_DGRAM {
+		sockInfo.IsUdp = true
+		SaveHookInfo(GetPK(int(mem.Pid), mem.Reg.Rax), sockInfo)
+	}
 	return
 }
 
@@ -123,32 +157,40 @@ func GetSocks5Data(mem *Memory, args ...RArg) (outBuf []byte, err error) {
 
 	addrIn := new(syscall.RawSockaddrInet4)
 	err = mem.Dump(AddrPtr, addrIn)
-	realDest, err := mem.CacheGet(int(SocketPtr))
-	if err != nil {
+	// realDest, err := mem.CacheGet(int(SocketPtr))
+	pk := GetPK(int(mem.Pid), uint64(SocketPtr))
+	sockInfo, ok := FdHookList[pk]
+	if err != nil || !ok {
 		L.MI(err)
 		return
 	}
-	mem.CacheDel(int(SocketPtr))
-	_tmp := strings.SplitN(realDest, "://", 2)
+	realDest := sockInfo.Dst
+	// mem.CacheDel(int(SocketPtr))
+	// _tmp := strings.SplitN(realDest, "://", 2)
 	// a := strings.SplitN(_tmp[1], ":", 2)
 	// port, _ := strconv.Atoi(a[1])
-	if _tmp[0] == "ip" {
-		ip := net.ParseIP(_tmp[1]).To4()
+	if sockInfo.OnlyIp {
+		ip := net.ParseIP(realDest).To4()
 		firstData := []byte{0x05, 0x01, 0x00, 0x01}
 		firstData = append(firstData, ip...)
 		buf := make([]byte, 2)
 		binary.BigEndian.PutUint16(buf, addrIn.Port)
-		firstData = append(firstData, buf...)
-		L.MI("Data:", net.IP(addrIn.Addr[0:4]).String(), firstData)
-
-		if _, err := syscall.Write(int(SocketPtr), firstData); err != nil {
-			L.MI(err)
-		}
+		firstData = append(firstData, buf[1])
+		L.MI("Data IP:", net.IP(addrIn.Addr[0:4]).String(), firstData)
 
 		outBuf = firstData
 	} else {
+		firstData := []byte{0x05, 0x01, 0x00, 0x03}
+		bufl := make([]byte, 2)
+		binary.BigEndian.PutUint16(bufl, uint16(len(realDest)))
 
-		// outBuf = firstData
+		firstData = append(firstData, bufl[1])
+		firstData = append(firstData, []byte(realDest)...)
+		buf := make([]byte, 2)
+		binary.BigEndian.PutUint16(buf, addrIn.Port)
+		firstData = append(firstData, buf...)
+		L.MI("Data domain:", net.IP(addrIn.Addr[0:4]).String(), firstData)
+		outBuf = firstData
 	}
 	return
 
@@ -168,52 +210,89 @@ func SmartHookTCP(mem *Memory, args ...RArg) (err error) {
 	if addrIn.Addr == NULL_ADDR {
 		return
 	}
+
+	pk := GetPK(int(mem.Pid), uint64(SocketPtr))
+
+	sockInfo, ok := FdHookList[pk]
+
+	if !ok {
+		return
+	}
 	if mem.Exit {
-		o, _ := mem.CacheGet(int(SocketPtr))
-		if o != "" {
-			a := strings.SplitN(o, ":", 2)
-			p, _ := strconv.Atoi(a[1])
-			NewCacheUnixSocket("/tmp/unix.sock").Send(a[0], int(p))
-		} else {
-			return
+		defer DelHookInfo(pk)
+		// if sockInfo.isTcp {
+		// 	addrIn.Addr = [4]byte{127, 0, 0, 1}
+		if sockInfo.isTcp {
+			addrIn.Port = uint16(PROXY_PORT)
+
+			L.GI("Connect Tcp to", addrIn.Addr, addrIn.Port, addrIn.Family, sockInfo)
+			mem.Load(AddrPtr, addrIn)
+
+		} else if sockInfo.IsUdp {
+			L.GI("Connect to", addrIn.Addr, addrIn.Port, addrIn.Family, sockInfo.IsUdp)
+
 		}
 
+		// }
+		return
 	} else {
 		// L.GI("pid:", mem.Pid, "Socket FD:", int(SocketPtr), "Entry:", !mem.Exit, Addr(addrIn.Addr).IP().String(), "Port:", addrIn.Port)
 
-		switch addrIn.Port {
-		case 53:
-			pk := GetPK(int(mem.Pid), uint64(SocketPtr))
-			if si, ok := FdHookList[pk]; ok && si.SocketType&syscall.SOCK_DGRAM > 0 {
-				L.GI(" ---> Udo Send", si.SocketFd)
+		if sockInfo.IsUdp {
+			if addrIn.Port == 53 {
+				L.GI(" ---> Udo Send", sockInfo.SocketFd)
 				addrIn.Addr = [4]byte{127, 0, 0, 1}
 				addrIn.Port = 40053
 				mem.Load(AddrPtr, addrIn)
-				defer DelHookInfo(pk)
-				return
-			}
-		}
-		if domain, isIp := dns.SearchByIP(addrIn.Addr); !isIp {
-			mem.CacheSave(int(SocketPtr), domain, false)
-		} else {
-			if !IsLocal(addrIn.Addr) {
-				mem.CacheSave(int(SocketPtr), net.IP(addrIn.Addr[:4]).String(), true)
-			}
-		}
-		if !IsLocal(addrIn.Addr) {
+			} else {
+				// data, err := GetSocks5Data(mem, args...)
+				data := sockInfo.Sock5Data()
+				if err != nil {
+					L.Fatal(err)
+				}
+				NewCacheUnixSocket("/tmp/unix.sock").Set(sockInfo.SocketFd, data)
+				L.GI("Set Data:", data)
 
-			L.GI(addrIn.Addr, "===>", PROXY_DEST, PROXY_PORT)
-			addrIn.Addr = str2ip(PROXY_DEST)
-			addrIn.Port = uint16(PROXY_PORT)
-			mem.Load(AddrPtr, addrIn)
-			// if socksData, err := GetSocks5Data(mem, args...); err != nil {
-			// 	L.MI(err)
-			// } else {
-			// 	// if _, err := syscall.Write(int(SocketPtr), socksData); err != nil {
-			// 	// 	L.MI(err)
-			// 	// }
-			// 	// C.WriteToSocket(int(SocketPtr), C.CBytes(socksData))
-			// }
+			}
+			return
+		} else if sockInfo.isTcp {
+			if domain, isIp := dns.SearchByIP(addrIn.Addr); !isIp {
+				// pk := GetPK(int(mem.Pid), uint64(SocketPtr))
+				sockInfo.Dst = domain
+				sockInfo.Dport = int(addrIn.Port)
+				// mem.CacheSave(int(SocketPtr), domain, false)
+			} else {
+				sockInfo.Dst = net.IP(addrIn.Addr[:4]).String()
+				sockInfo.OnlyIp = true
+				sockInfo.Dport = int(addrIn.Port)
+				// if !IsLocal(addrIn.Addr) {
+				// 	mem.CacheSave(int(SocketPtr), net.IP(addrIn.Addr[:4]).String(), true)
+				// }
+			}
+			FdHookList[pk] = sockInfo
+			if !IsLocal(addrIn.Addr) {
+
+				L.GI(addrIn.Addr, "===>", PROXY_DEST, PROXY_PORT)
+				// data, erre := GetSocks5Data(mem, args...)
+				// if err != nil {
+				// 	L.MI("Socks5 error:", erre)
+				// 	return
+				// }
+				// L.GI("Set Data:", "ok")
+				// addrIN := &syscall.RawSockaddrInet4{
+				// 	Addr:   [4]byte{127, 0, 0, 1},
+				// 	Port:   uint16(PROXY_PORT),
+				// 	Family: addrIn.Family,
+				// 	Zero:   addrIn.Zero,
+				// }
+				addrIn.Addr = [4]byte{127, 0, 0, 1}
+				addrIn.Port = uint16(PROXY_PORT)
+				if err := mem.Load(AddrPtr, addrIn); err != nil {
+					L.MI("Err load:", err)
+				}
+
+			}
+
 		}
 
 	}
